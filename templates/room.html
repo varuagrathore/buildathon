@@ -26,40 +26,26 @@
       </div>
 
       <div class="messages" id="messages">
-        {% set real_messages = messages | rejectattr('message', 'in', ['has entered the room', 'has left the room']) | list %}
-        <div class="empty-hint" id="emptyHint" style="{{ 'display:none;' if real_messages|length > 0 else '' }}">
+        <div class="empty-hint" id="emptyHint">
           <div class="empty-hint-icon">💬</div>
           <p>Nobody's spilled anything yet.</p>
           <p class="empty-hint-sub">Be the one who breaks the silence.</p>
         </div>
-        {% for msg in messages %}
-          {% if msg.message in ["has entered the room", "has left the room"] %}
-            <div class="message system">
-              <div class="msg-bubble">{{ msg.name }} {{ msg.message }}</div>
-            </div>
-          {% else %}
-            <div class="message {{ 'own' if msg.name == name else 'other' }}">
-              <span class="msg-meta">{{ msg.name }}</span>
-              <div class="msg-bubble">
-                {{ msg.message }}
-                {% if msg.emoji %}<span class="auto-emoji" title="Detected vibe">{{ msg.emoji }}</span>{% endif %}
-              </div>
-              {% if msg.id %}
-              <div class="reactions" data-id="{{ msg.id }}">
-                {% for e in quick_reactions %}
-                  {% set c = (msg.reactions or {}).get(e, 0) %}
-                  <button class="reaction-btn {{ 'active' if c else '' }}" data-emoji="{{ e }}">{{ e }}<span class="count">{{ c if c else '' }}</span></button>
-                {% endfor %}
-              </div>
-              {% endif %}
-            </div>
-          {% endif %}
-        {% endfor %}
       </div>
 
       <div class="typing-indicator" id="typingIndicator"></div>
 
+      <div class="picker-panel" id="emojiPanel" hidden>
+        <div class="picker-grid" id="emojiGrid"></div>
+      </div>
+      <div class="picker-panel" id="gifPanel" hidden>
+        <input type="text" id="gifSearchInput" placeholder="Search GIFs…" autocomplete="off">
+        <div class="gif-grid" id="gifGrid"></div>
+      </div>
+
       <div class="composer">
+        <button id="emoji-btn" class="btn secondary icon-btn" type="button" title="Emoji">&#128512;</button>
+        <button id="gif-btn" class="btn secondary icon-btn" type="button" title="GIF">GIF</button>
         <input type="text" id="message" placeholder="Spill something… we'll guess the vibe" autocomplete="off">
         <button id="send-btn" class="btn primary">Send <span aria-hidden="true">&#8594;</span></button>
       </div>
@@ -68,7 +54,17 @@
 
 <script type="text/javascript">
   const CURRENT_NAME = {{ name|tojson }};
-  const QUICK_REACTIONS = {{ quick_reactions|tojson }};
+  const EMOJI_LIST = [
+    "😀","😁","😂","🤣","😊","😍","🥰","😘","😜","🤪","😎","🥳","😇","🙂","🙃","😉",
+    "😢","😭","😡","🤬","😱","😨","😰","😥","😓","🤯","🥵","🥶","😴","🤤","🤒","🤕",
+    "🤔","🤨","😐","😏","😬","🙄","😴","🤢","🤮","🤧","😷","🥴","😵","🤠","🥸","🧐",
+    "👍","👎","👏","🙌","🙏","💪","👀","👋","🤝","✌️","🤞","🤙","👌","🖕","💯","🔥",
+    "❤️","🧡","💛","💚","💙","💜","🖤","🤍","💔","💕","💞","💓","💗","💖","😻","💋",
+    "🎉","🎊","🎂","🍾","🥂","☕","🍕","🍔","🍟","🍩","🍺","🍷","🍫","🍎","🍿","🧋",
+    "🐶","🐱","🐭","🐹","🐻","🐼","🐨","🐸","🙈","🙉","🙊","🦄","🐷","🐔","🦋","🐢",
+    "⚽","🏀","🎮","🎧","🎸","🎨","📚","💻","📱","⏰","💰","🚀","✈️","🚗","🏠","🎯",
+    "💀","👻","👽","🤖","😈","👹","🧠","👑","💎","🔔","⭐","🌈","☀️","🌙","⚡","💤"
+  ];
   var socketio = io();
 
   const messages = document.getElementById("messages");
@@ -83,21 +79,38 @@
     return `hsl(${hue}, 60%, 62%)`;
   }
 
+  function renderReactionChips(wrap, reactions){
+    wrap.querySelectorAll(".reaction-btn").forEach(el => el.remove());
+    const addBtn = wrap.querySelector(".reaction-add-btn");
+    Object.entries(reactions || {}).forEach(([emoji, count]) => {
+      if (!count) return;
+      const btn = document.createElement("button");
+      btn.className = "reaction-btn active";
+      btn.dataset.emoji = emoji;
+      btn.type = "button";
+      btn.textContent = emoji;
+      const countEl = document.createElement("span");
+      countEl.className = "count";
+      countEl.textContent = count;
+      btn.appendChild(countEl);
+      wrap.insertBefore(btn, addBtn);
+    });
+  }
+
   function buildReactionsBar(id, reactions){
     const wrap = document.createElement("div");
     wrap.className = "reactions";
     wrap.dataset.id = id;
-    QUICK_REACTIONS.forEach(emoji => {
-      const count = (reactions && reactions[emoji]) || 0;
-      const btn = document.createElement("button");
-      btn.className = "reaction-btn" + (count ? " active" : "");
-      btn.dataset.emoji = emoji;
-      btn.textContent = emoji;
-      const countEl = document.createElement("span");
-      countEl.className = "count";
-      countEl.textContent = count ? count : "";
-      btn.appendChild(countEl);
-      wrap.appendChild(btn);
+    const addBtn = document.createElement("button");
+    addBtn.className = "reaction-add-btn";
+    addBtn.type = "button";
+    addBtn.textContent = "+";
+    addBtn.title = "Add reaction";
+    wrap.appendChild(addBtn);
+    renderReactionChips(wrap, reactions);
+    addBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openEmojiPanel({ type: "react", id });
     });
     return wrap;
   }
@@ -123,20 +136,28 @@
       meta.className = "msg-meta";
       meta.textContent = data.name;
       if (who === "other") meta.style.color = nameColor(data.name);
+      el.appendChild(meta);
 
-      const bubble = document.createElement("div");
-      bubble.className = "msg-bubble";
-      bubble.appendChild(document.createTextNode(data.message + " "));
-      if (data.emoji) {
-        const emojiSpan = document.createElement("span");
-        emojiSpan.className = "auto-emoji";
-        emojiSpan.title = "Detected vibe";
-        emojiSpan.textContent = data.emoji;
-        bubble.appendChild(emojiSpan);
+      if (data.type === "gif") {
+        const img = document.createElement("img");
+        img.className = "gif-bubble";
+        img.src = data.message;
+        img.loading = "lazy";
+        el.appendChild(img);
+      } else {
+        const bubble = document.createElement("div");
+        bubble.className = "msg-bubble";
+        bubble.appendChild(document.createTextNode(data.message + " "));
+        if (data.emoji) {
+          const emojiSpan = document.createElement("span");
+          emojiSpan.className = "auto-emoji";
+          emojiSpan.title = "Detected vibe";
+          emojiSpan.textContent = data.emoji;
+          bubble.appendChild(emojiSpan);
+        }
+        el.appendChild(bubble);
       }
 
-      el.appendChild(meta);
-      el.appendChild(bubble);
       if (data.id) {
         el.appendChild(buildReactionsBar(data.id, data.reactions));
       }
@@ -155,19 +176,13 @@
   socketio.on("reaction_update", (data) => {
     const wrap = messages.querySelector(`.reactions[data-id="${data.message_id}"]`);
     if (!wrap) return;
-    QUICK_REACTIONS.forEach(emoji => {
-      const count = data.reactions[emoji] || 0;
-      const btn = wrap.querySelector(`.reaction-btn[data-emoji="${emoji}"]`);
-      if (btn) {
-        btn.querySelector(".count").textContent = count ? count : "";
-        btn.classList.toggle("active", count > 0);
-        if (count > 0) {
-          btn.classList.remove("bump");
-          void btn.offsetWidth;
-          btn.classList.add("bump");
-        }
-      }
-    });
+    renderReactionChips(wrap, data.reactions);
+    const newest = wrap.querySelector(".reaction-btn:last-of-type");
+    if (newest) {
+      newest.classList.remove("bump");
+      void newest.offsetWidth;
+      newest.classList.add("bump");
+    }
   });
 
   socketio.on("presence_update", (data) => {
@@ -211,19 +226,125 @@
     socketio.emit("react", { message_id: wrap.dataset.id, emoji: btn.dataset.emoji });
   });
 
+  const messageInput = document.getElementById("message");
+
   const sendMessage = () => {
-    const input = document.getElementById("message");
-    const msg = input.value.trim();
+    const msg = messageInput.value.trim();
     if (!msg) return;
-    socketio.emit("message", { data: msg });
-    input.value = "";
+    socketio.emit("message", { data: msg, type: "text" });
+    messageInput.value = "";
   };
 
   document.getElementById("send-btn").addEventListener("click", sendMessage);
-  const messageInput = document.getElementById("message");
   messageInput.addEventListener("keyup", (e) => {
     if (e.key === "Enter") { sendMessage(); return; }
     socketio.emit("typing");
+  });
+
+  /* ---------- emoji picker ---------- */
+  const emojiPanel = document.getElementById("emojiPanel");
+  const emojiGrid = document.getElementById("emojiGrid");
+  const emojiBtn = document.getElementById("emoji-btn");
+  let pickerTarget = null;
+
+  EMOJI_LIST.forEach(emoji => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "emoji-opt";
+    btn.textContent = emoji;
+    btn.addEventListener("click", () => {
+      if (!pickerTarget) return;
+      if (pickerTarget.type === "react") {
+        socketio.emit("react", { message_id: pickerTarget.id, emoji });
+      } else {
+        insertAtCursor(messageInput, emoji);
+      }
+      closePanels();
+    });
+    emojiGrid.appendChild(btn);
+  });
+
+  function insertAtCursor(input, text){
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    input.value = input.value.slice(0, start) + text + input.value.slice(end);
+    const pos = start + text.length;
+    input.focus();
+    input.setSelectionRange(pos, pos);
+  }
+
+  function openEmojiPanel(target){
+    pickerTarget = target;
+    gifPanel.hidden = true;
+    emojiPanel.hidden = false;
+  }
+
+  function closePanels(){
+    emojiPanel.hidden = true;
+    gifPanel.hidden = true;
+    pickerTarget = null;
+  }
+
+  emojiBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!emojiPanel.hidden && pickerTarget && pickerTarget.type === "compose") { closePanels(); return; }
+    openEmojiPanel({ type: "compose" });
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!emojiPanel.hidden && !emojiPanel.contains(e.target) && e.target !== emojiBtn && !e.target.closest(".reaction-add-btn")) {
+      emojiPanel.hidden = true;
+    }
+    if (!gifPanel.hidden && !gifPanel.contains(e.target) && e.target !== gifBtn) {
+      gifPanel.hidden = true;
+    }
+  });
+
+  /* ---------- gif search ---------- */
+  const gifPanel = document.getElementById("gifPanel");
+  const gifGrid = document.getElementById("gifGrid");
+  const gifBtn = document.getElementById("gif-btn");
+  const gifSearchInput = document.getElementById("gifSearchInput");
+  let gifDebounce;
+
+  async function searchGifs(query){
+    gifGrid.innerHTML = '<div class="gif-status">Searching…</div>';
+    try {
+      const res = await fetch(`/gif-search?q=${encodeURIComponent(query)}`);
+      const data = await res.json();
+      gifGrid.innerHTML = "";
+      if (!data.results || !data.results.length) {
+        gifGrid.innerHTML = `<div class="gif-status">${data.error || "No results"}</div>`;
+        return;
+      }
+      data.results.forEach(url => {
+        const img = document.createElement("img");
+        img.src = url;
+        img.loading = "lazy";
+        img.addEventListener("click", () => {
+          socketio.emit("message", { data: url, type: "gif" });
+          closePanels();
+        });
+        gifGrid.appendChild(img);
+      });
+    } catch (err) {
+      gifGrid.innerHTML = '<div class="gif-status">Search failed</div>';
+    }
+  }
+
+  gifBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!gifPanel.hidden) { closePanels(); return; }
+    emojiPanel.hidden = true;
+    gifPanel.hidden = false;
+    gifSearchInput.value = "";
+    gifSearchInput.focus();
+    searchGifs("");
+  });
+
+  gifSearchInput.addEventListener("input", () => {
+    clearTimeout(gifDebounce);
+    gifDebounce = setTimeout(() => searchGifs(gifSearchInput.value.trim()), 350);
   });
 
   messages.scrollTop = messages.scrollHeight;
