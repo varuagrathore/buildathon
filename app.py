@@ -94,7 +94,7 @@ def room():
     return render_template(
         "room.html",
         code=room,
-        messages=rooms[room]["messages"],
+        messages=[],
         name=session.get("name"),
         quick_reactions=QUICK_REACTIONS,
     )
