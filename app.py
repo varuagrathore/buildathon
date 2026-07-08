@@ -4,15 +4,12 @@ import re
 import uuid
 from string import ascii_uppercase
 
-import requests
-from flask import Flask, jsonify, render_template, request, session, redirect, url_for
+from flask import Flask, render_template, request, session, redirect, url_for
 from flask_socketio import join_room, leave_room, send, SocketIO
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 socketio = SocketIO(app)
-
-TENOR_API_KEY = os.environ.get("TENOR_API_KEY", "")
 
 rooms = {}
 
@@ -100,32 +97,6 @@ def room():
     )
 
 
-@app.route("/gif-search")
-def gif_search():
-    query = request.args.get("q", "").strip()
-    if not TENOR_API_KEY:
-        return jsonify(results=[], error="GIF search not configured"), 200
-
-    url = "https://tenor.googleapis.com/v2/search" if query else "https://tenor.googleapis.com/v2/featured"
-    params = {"key": TENOR_API_KEY, "client_key": "chatroom_1", "limit": 24, "media_filter": "gif"}
-    if query:
-        params["q"] = query
-
-    try:
-        resp = requests.get(url, params=params, timeout=6)
-        resp.raise_for_status()
-        data = resp.json()
-    except requests.RequestException:
-        return jsonify(results=[], error="GIF search failed"), 200
-
-    results = [
-        item["media_formats"]["gif"]["url"]
-        for item in data.get("results", [])
-        if item.get("media_formats", {}).get("gif", {}).get("url")
-    ]
-    return jsonify(results=results)
-
-
 @socketio.on("message")
 def message(data):
     room = session.get("room")
@@ -133,13 +104,11 @@ def message(data):
         return
 
     text = data["data"]
-    msg_type = data.get("type", "text")
     content = {
         "id": str(uuid.uuid4()),
         "name": session.get("name"),
         "message": text,
-        "type": msg_type,
-        "emoji": detect_emotion(text) if msg_type == "text" else "",
+        "emoji": detect_emotion(text),
         "reactions": {},
     }
     send(content, to=room)

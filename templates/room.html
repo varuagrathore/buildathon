@@ -38,14 +38,9 @@
       <div class="picker-panel" id="emojiPanel" hidden>
         <div class="picker-grid" id="emojiGrid"></div>
       </div>
-      <div class="picker-panel" id="gifPanel" hidden>
-        <input type="text" id="gifSearchInput" placeholder="Search GIFs…" autocomplete="off">
-        <div class="gif-grid" id="gifGrid"></div>
-      </div>
 
       <div class="composer">
         <button id="emoji-btn" class="btn secondary icon-btn" type="button" title="Emoji">&#128512;</button>
-        <button id="gif-btn" class="btn secondary icon-btn" type="button" title="GIF">GIF</button>
         <input type="text" id="message" placeholder="Spill something… we'll guess the vibe" autocomplete="off">
         <button id="send-btn" class="btn primary">Send <span aria-hidden="true">&#8594;</span></button>
       </div>
@@ -138,25 +133,17 @@
       if (who === "other") meta.style.color = nameColor(data.name);
       el.appendChild(meta);
 
-      if (data.type === "gif") {
-        const img = document.createElement("img");
-        img.className = "gif-bubble";
-        img.src = data.message;
-        img.loading = "lazy";
-        el.appendChild(img);
-      } else {
-        const bubble = document.createElement("div");
-        bubble.className = "msg-bubble";
-        bubble.appendChild(document.createTextNode(data.message + " "));
-        if (data.emoji) {
-          const emojiSpan = document.createElement("span");
-          emojiSpan.className = "auto-emoji";
-          emojiSpan.title = "Detected vibe";
-          emojiSpan.textContent = data.emoji;
-          bubble.appendChild(emojiSpan);
-        }
-        el.appendChild(bubble);
+      const bubble = document.createElement("div");
+      bubble.className = "msg-bubble";
+      bubble.appendChild(document.createTextNode(data.message + " "));
+      if (data.emoji) {
+        const emojiSpan = document.createElement("span");
+        emojiSpan.className = "auto-emoji";
+        emojiSpan.title = "Detected vibe";
+        emojiSpan.textContent = data.emoji;
+        bubble.appendChild(emojiSpan);
       }
+      el.appendChild(bubble);
 
       if (data.id) {
         el.appendChild(buildReactionsBar(data.id, data.reactions));
@@ -231,7 +218,7 @@
   const sendMessage = () => {
     const msg = messageInput.value.trim();
     if (!msg) return;
-    socketio.emit("message", { data: msg, type: "text" });
+    socketio.emit("message", { data: msg });
     messageInput.value = "";
   };
 
@@ -275,13 +262,11 @@
 
   function openEmojiPanel(target){
     pickerTarget = target;
-    gifPanel.hidden = true;
     emojiPanel.hidden = false;
   }
 
   function closePanels(){
     emojiPanel.hidden = true;
-    gifPanel.hidden = true;
     pickerTarget = null;
   }
 
@@ -295,56 +280,6 @@
     if (!emojiPanel.hidden && !emojiPanel.contains(e.target) && e.target !== emojiBtn && !e.target.closest(".reaction-add-btn")) {
       emojiPanel.hidden = true;
     }
-    if (!gifPanel.hidden && !gifPanel.contains(e.target) && e.target !== gifBtn) {
-      gifPanel.hidden = true;
-    }
-  });
-
-  /* ---------- gif search ---------- */
-  const gifPanel = document.getElementById("gifPanel");
-  const gifGrid = document.getElementById("gifGrid");
-  const gifBtn = document.getElementById("gif-btn");
-  const gifSearchInput = document.getElementById("gifSearchInput");
-  let gifDebounce;
-
-  async function searchGifs(query){
-    gifGrid.innerHTML = '<div class="gif-status">Searching…</div>';
-    try {
-      const res = await fetch(`/gif-search?q=${encodeURIComponent(query)}`);
-      const data = await res.json();
-      gifGrid.innerHTML = "";
-      if (!data.results || !data.results.length) {
-        gifGrid.innerHTML = `<div class="gif-status">${data.error || "No results"}</div>`;
-        return;
-      }
-      data.results.forEach(url => {
-        const img = document.createElement("img");
-        img.src = url;
-        img.loading = "lazy";
-        img.addEventListener("click", () => {
-          socketio.emit("message", { data: url, type: "gif" });
-          closePanels();
-        });
-        gifGrid.appendChild(img);
-      });
-    } catch (err) {
-      gifGrid.innerHTML = '<div class="gif-status">Search failed</div>';
-    }
-  }
-
-  gifBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (!gifPanel.hidden) { closePanels(); return; }
-    emojiPanel.hidden = true;
-    gifPanel.hidden = false;
-    gifSearchInput.value = "";
-    gifSearchInput.focus();
-    searchGifs("");
-  });
-
-  gifSearchInput.addEventListener("input", () => {
-    clearTimeout(gifDebounce);
-    gifDebounce = setTimeout(() => searchGifs(gifSearchInput.value.trim()), 350);
   });
 
   messages.scrollTop = messages.scrollHeight;
