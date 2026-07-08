@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chat Rooms</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="home-wrap">
+    <div class="console">
+      <div class="console-top">
+        <span class="eyebrow">The virtual break room</span>
+        <span class="status-pill"><span class="status-dot"></span>Idle</span>
+      </div>
+      <h1>Spill the tea</h1>
+      <p class="sub">Drop your name, then start a huddle or join one someone slipped you the code for.</p>
+
+      {% if error %}
+        <div class="error">{{ error }}</div>
+      {% endif %}
+
+      <form method="POST" action="{{ url_for('home') }}">
+        <label for="name">Your name</label>
+        <input type="text" name="name" id="name" placeholder="e.g. Alex" value="{{ name if name else '' }}" autocomplete="off">
+
+        <label for="code-input">Huddle code <span class="optional">(only if joining one)</span></label>
+        <input type="text" name="code" id="code-input" class="lcd" placeholder="----" value="{{ code if code else '' }}" maxlength="4" autocomplete="off">
+
+        <div class="btn-row">
+          <button type="submit" name="join" value="True" class="btn secondary">Join huddle</button>
+          <button type="submit" name="create" value="True" class="btn primary">Start huddle</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+<script>
+  const codeInput = document.getElementById('code-input');
+  codeInput.addEventListener('input', () => {
+    codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+  });
+</script>
+</body>
+</html>

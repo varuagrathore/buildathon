@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Room {{ code }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body>
+  <div class="room-wrap">
+    <div class="room-shell">
+      <div class="room-header">
+        <div class="freq-block">
+          <span class="status-pill live"><span class="status-dot"></span>Huddle live</span>
+          <span class="freq-lcd">{{ code }}</span>
+        </div>
+        <div class="header-right">
+          <a href="{{ url_for('home') }}" class="btn danger-outline">Leave</a>
+        </div>
+      </div>
+
+      <div class="presence-bar" id="presenceBar">
+        <span class="presence-count" id="presenceCount">· connecting…</span>
+        <div class="presence-avatars" id="presenceAvatars"></div>
+      </div>
+
+      <div class="messages" id="messages">
+        {% set real_messages = messages | rejectattr('message', 'in', ['has entered the room', 'has left the room']) | list %}
+        <div class="empty-hint" id="emptyHint" style="{{ 'display:none;' if real_messages|length > 0 else '' }}">
+          <div class="empty-hint-icon">💬</div>
+          <p>Nobody's spilled anything yet.</p>
+          <p class="empty-hint-sub">Be the one who breaks the silence.</p>
+        </div>
+        {% for msg in messages %}
+          {% if msg.message in ["has entered the room", "has left the room"] %}
+            <div class="message system">
+              <div class="msg-bubble">{{ msg.name }} {{ msg.message }}</div>
+            </div>
+          {% else %}
+            <div class="message {{ 'own' if msg.name == name else 'other' }}">
+              <span class="msg-meta">{{ msg.name }}</span>
+              <div class="msg-bubble">
+                {{ msg.message }}
+                {% if msg.emoji %}<span class="auto-emoji" title="Detected vibe">{{ msg.emoji }}</span>{% endif %}
+              </div>
+              {% if msg.id %}
+              <div class="reactions" data-id="{{ msg.id }}">
+                {% for e in quick_reactions %}
+                  {% set c = (msg.reactions or {}).get(e, 0) %}
+                  <button class="reaction-btn {{ 'active' if c else '' }}" data-emoji="{{ e }}">{{ e }}<span class="count">{{ c if c else '' }}</span></button>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+
+      <div class="typing-indicator" id="typingIndicator"></div>
+
+      <div class="composer">
+        <input type="text" id="message" placeholder="Spill something… we'll guess the vibe" autocomplete="off">
+        <button id="send-btn" class="btn primary">Send <span aria-hidden="true">&#8594;</span></button>
+      </div>
+    </div>
+  </div>
+
+<script type="text/javascript">
+  const CURRENT_NAME = {{ name|tojson }};
+  const QUICK_REACTIONS = {{ quick_reactions|tojson }};
+  var socketio = io();
+
+  const messages = document.getElementById("messages");
+  const typingIndicator = document.getElementById("typingIndicator");
+  const presenceCount = document.getElementById("presenceCount");
+  const presenceAvatars = document.getElementById("presenceAvatars");
+
+  function nameColor(name){
+    let hash = 0;
+    for (let i = 0; i < name.length; i++){ hash = name.charCodeAt(i) + ((hash << 5) - hash); }
+    const hue = Math.abs(hash) % 360;
+    return `hsl(${hue}, 60%, 62%)`;
+  }
+
+  function buildReactionsBar(id, reactions){
+    const wrap = document.createElement("div");
+    wrap.className = "reactions";
+    wrap.dataset.id = id;
+    QUICK_REACTIONS.forEach(emoji => {
+      const count = (reactions && reactions[emoji]) || 0;
+      const btn = document.createElement("button");
+      btn.className = "reaction-btn" + (count ? " active" : "");
+      btn.dataset.emoji = emoji;
+      btn.textContent = emoji;
+      const countEl = document.createElement("span");
+      countEl.className = "count";
+      countEl.textContent = count ? count : "";
+      btn.appendChild(countEl);
+      wrap.appendChild(btn);
+    });
+    return wrap;
+  }
+
+  const createMessage = (data) => {
+    const el = document.createElement("div");
+    const isSystem = data.message === "has entered the room" || data.message === "has left the room";
+
+    if (isSystem) {
+      el.className = "message system";
+      const bubble = document.createElement("div");
+      bubble.className = "msg-bubble";
+      bubble.textContent = `${data.name} ${data.message}`;
+      el.appendChild(bubble);
+    } else {
+      const emptyHint = document.getElementById("emptyHint");
+      if (emptyHint) emptyHint.style.display = "none";
+
+      const who = data.name === CURRENT_NAME ? "own" : "other";
+      el.className = `message ${who} enter`;
+
+      const meta = document.createElement("span");
+      meta.className = "msg-meta";
+      meta.textContent = data.name;
+      if (who === "other") meta.style.color = nameColor(data.name);
+
+      const bubble = document.createElement("div");
+      bubble.className = "msg-bubble";
+      bubble.appendChild(document.createTextNode(data.message + " "));
+      if (data.emoji) {
+        const emojiSpan = document.createElement("span");
+        emojiSpan.className = "auto-emoji";
+        emojiSpan.title = "Detected vibe";
+        emojiSpan.textContent = data.emoji;
+        bubble.appendChild(emojiSpan);
+      }
+
+      el.appendChild(meta);
+      el.appendChild(bubble);
+      if (data.id) {
+        el.appendChild(buildReactionsBar(data.id, data.reactions));
+      }
+    }
+    messages.appendChild(el);
+    messages.scrollTop = messages.scrollHeight;
+    requestAnimationFrame(() => el.classList.remove("enter"));
+  };
+
+  socketio.on("message", (data) => {
+    createMessage(data);
+    delete typingUsers[data.name];
+    renderTypingIndicator();
+  });
+
+  socketio.on("reaction_update", (data) => {
+    const wrap = messages.querySelector(`.reactions[data-id="${data.message_id}"]`);
+    if (!wrap) return;
+    QUICK_REACTIONS.forEach(emoji => {
+      const count = data.reactions[emoji] || 0;
+      const btn = wrap.querySelector(`.reaction-btn[data-emoji="${emoji}"]`);
+      if (btn) {
+        btn.querySelector(".count").textContent = count ? count : "";
+        btn.classList.toggle("active", count > 0);
+        if (count > 0) {
+          btn.classList.remove("bump");
+          void btn.offsetWidth;
+          btn.classList.add("bump");
+        }
+      }
+    });
+  });
+
+  socketio.on("presence_update", (data) => {
+    const others = data.names.filter(n => n !== CURRENT_NAME);
+    presenceCount.textContent = `· ${data.count} in the room`;
+    presenceAvatars.innerHTML = "";
+    data.names.slice(0, 6).forEach(n => {
+      const av = document.createElement("span");
+      av.className = "avatar";
+      av.textContent = n.charAt(0).toUpperCase();
+      av.style.background = nameColor(n) + "33";
+      av.style.borderColor = nameColor(n);
+      av.style.color = nameColor(n);
+      av.title = n;
+      presenceAvatars.appendChild(av);
+    });
+  });
+
+  let typingUsers = {};
+  function renderTypingIndicator(){
+    const names = Object.keys(typingUsers);
+    if (!names.length){ typingIndicator.textContent = ""; return; }
+    typingIndicator.textContent = names.length === 1
+      ? `${names[0]} is typing…`
+      : `${names.join(", ")} are typing…`;
+  }
+  socketio.on("typing", (data) => {
+    if (data.name === CURRENT_NAME) return;
+    clearTimeout(typingUsers[data.name]);
+    typingUsers[data.name] = setTimeout(() => {
+      delete typingUsers[data.name];
+      renderTypingIndicator();
+    }, 2000);
+    renderTypingIndicator();
+  });
+
+  messages.addEventListener("click", (e) => {
+    const btn = e.target.closest(".reaction-btn");
+    if (!btn) return;
+    const wrap = btn.closest(".reactions");
+    socketio.emit("react", { message_id: wrap.dataset.id, emoji: btn.dataset.emoji });
+  });
+
+  const sendMessage = () => {
+    const input = document.getElementById("message");
+    const msg = input.value.trim();
+    if (!msg) return;
+    socketio.emit("message", { data: msg });
+    input.value = "";
+  };
+
+  document.getElementById("send-btn").addEventListener("click", sendMessage);
+  const messageInput = document.getElementById("message");
+  messageInput.addEventListener("keyup", (e) => {
+    if (e.key === "Enter") { sendMessage(); return; }
+    socketio.emit("typing");
+  });
+
+  messages.scrollTop = messages.scrollHeight;
+</script>
+</body>
+</html>
